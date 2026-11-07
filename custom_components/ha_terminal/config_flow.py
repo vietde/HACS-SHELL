@@ -14,9 +14,13 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_ALLOW_PORT_FORWARDING,
+    CONF_ALLOW_SFTP,
     CONF_SHELL,
     CONF_SSH_ENABLED,
     CONF_SSH_PORT,
+    DEFAULT_ALLOW_PORT_FORWARDING,
+    DEFAULT_ALLOW_SFTP,
     DEFAULT_SHELL,
     DEFAULT_SSH_ENABLED,
     DEFAULT_SSH_PORT,
@@ -38,6 +42,13 @@ def _schema(defaults: dict) -> vol.Schema:
             vol.Required(
                 CONF_SHELL, default=defaults.get(CONF_SHELL, DEFAULT_SHELL)
             ): TextSelector(),
+            vol.Required(
+                CONF_ALLOW_SFTP, default=defaults.get(CONF_ALLOW_SFTP, DEFAULT_ALLOW_SFTP)
+            ): BooleanSelector(),
+            vol.Required(
+                CONF_ALLOW_PORT_FORWARDING,
+                default=defaults.get(CONF_ALLOW_PORT_FORWARDING, DEFAULT_ALLOW_PORT_FORWARDING),
+            ): BooleanSelector(),
         }
     )
 

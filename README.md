@@ -7,7 +7,7 @@ The Advanced SSH & Web Terminal add-on runs a whole second container
 (Alpine + ttyd + tmux + zsh + OpenSSH) just to give you a shell. HA
 Terminal does the same job in-process in Home Assistant Core: a PTY shell
 bridged to the browser over a websocket, an SSH server on a port you pick,
-and a live tail of `home-assistant.log`. No extra container, no extra
+and a file manager for `/config`. No extra container, no extra
 memory-hungry stack — just the shell.
 
 ## Features
@@ -18,7 +18,19 @@ memory-hungry stack — just the shell.
   real terminal.
 - **SSH server** — connects with any SSH client on the port you choose
   (default **2222**, so it never clashes with the add-on's 22). Log in
-  with your Home Assistant username and password; **admin users only**.
+  with your Home Assistant username and password, or with a public key
+  (see below); **admin users only**.
+- **SFTP** — file transfer over the same SSH port (`sftp`, FileZilla,
+  WinSCP…), chrooted to `/config`: clients see `/config` as `/` and
+  cannot walk above it.
+- **Port forwarding** — `ssh -L` / `ssh -R` tunnels through Home
+  Assistant to other devices on your network. **Off by default** — turn
+  it on in the integration options (Settings → Devices & Services →
+  HA Terminal → Configure).
+- **Public-key auth** — passwordless login with a key in
+  `/config/.ssh/authorized_keys` (standard OpenSSH format, one key per
+  line). Only works for HA admin users; the key is matched against the
+  HA username you log in as.
 - **File manager** — browse `/config` right from the Terminal page:
   navigate folders, click a file to download it, and upload files
   straight into the folder you're in (existing files are overwritten).
@@ -42,6 +54,18 @@ memory-hungry stack — just the shell.
   it from inside Home Assistant while logged in.
 - **SSH:** `ssh -p 2222 <your-ha-username>@<ha-ip>`, password is your Home
   Assistant password. Admin accounts only.
+- **Public key:** generate a key (`ssh-keygen -t ed25519`), then put the
+  `.pub` line into `/config/.ssh/authorized_keys` (via the Files tab or
+  SFTP). After that, `ssh -p 2222 <your-ha-username>@<ha-ip>` logs in
+  without a password. Keys with `from=` restrictions are not honoured
+  (they are rejected — safe failure).
+- **SFTP:** `sftp -P 2222 <your-ha-username>@<ha-ip>` — you land in
+  `/config`. Or point FileZilla/WinSCP at the same host/port with SFTP
+  protocol. Downloads and uploads stay inside `/config`.
+- **Port forwarding** (must be enabled in the integration options first):
+  `ssh -p 2222 -L 8080:<other-device-ip>:80 <user>@<ha-ip>` reaches
+  another device on your LAN through HA; `ssh -p 2222 -R 8080:localhost:8123
+  <user>@<ha-ip>` exposes a port on HA to a remote host.
 - **Files:** Terminal → Files tab. Browse `/config`, click a file to
   download it, Upload to put files into the current folder.
 
@@ -63,9 +87,16 @@ host. That is the whole point (lightweight), and the one real limit:
   access token **and** an admin user. Opening the page without logging
   into HA gets you nothing.
 - The SSH server authenticates against Home Assistant accounts (admin
-  only). No separate password to manage, no anonymous access. The host
+  only), by password or by a key in `/config/.ssh/authorized_keys`.
+  No separate password to manage, no anonymous access. The host
   key is generated on first start and stored at
   `/config/.ssh/ha_terminal_host_key`.
+- SFTP is chrooted to `/config`. Note: a symlink *inside* `/config` that
+  points outside it could still be followed by SFTP — don't create such
+  links.
+- Port forwarding is off by default because a tunnel lets an SSH client
+  reach other devices on your LAN through HA. Only enable it if you use
+  tunnels.
 - Do not expose the SSH port outside your LAN unless you know what you
   are doing.
 
@@ -79,7 +110,9 @@ host. That is the whole point (lightweight), and the one real limit:
 
 ## Status
 
-v0.1.1 — the log viewer is removed (it never worked reliably) and
-replaced by the file manager. Not yet in: public-key SSH auth, SFTP,
-multiple saved terminal tabs, tmux-style persistent sessions (reconnect
-starts a fresh shell).
+v0.1.2 — port forwarding (`ssh -L` / `-R`, off by default), SFTP
+(chrooted to `/config`), and public-key auth via
+`/config/.ssh/authorized_keys` (admin users only). All three are covered
+by offline tests (key login incl. refusals, SFTP put/get + chroot
+escape, forwarding allow/deny). Not yet in: multiple saved terminal
+tabs, tmux-style persistent sessions (reconnect starts a fresh shell).

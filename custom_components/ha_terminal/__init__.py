@@ -17,9 +17,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CONF_ALLOW_PORT_FORWARDING,
+    CONF_ALLOW_SFTP,
     CONF_SHELL,
     CONF_SSH_ENABLED,
     CONF_SSH_PORT,
+    DEFAULT_ALLOW_PORT_FORWARDING,
+    DEFAULT_ALLOW_SFTP,
     DEFAULT_SHELL,
     DEFAULT_SSH_ENABLED,
     DEFAULT_SSH_PORT,
@@ -40,6 +44,14 @@ _LOGGER = logging.getLogger(__name__)
 PANEL_URL_PATH = "ha_terminal"
 
 
+async def _is_admin_user(hass: HomeAssistant, username: str) -> bool:
+    """True if the named HA user exists and is an admin."""
+    for user in await hass.auth.async_get_users():
+        if user.name and user.name.lower() == username.lower():
+            return user.is_admin
+    return False
+
+
 async def _validate_ha_password(hass: HomeAssistant, username: str, password: str) -> bool:
     """Check an HA username/password; only admin users may use SSH."""
     for provider in hass.auth.auth_providers:
@@ -51,10 +63,7 @@ async def _validate_ha_password(hass: HomeAssistant, username: str, password: st
         except Exception:  # noqa: BLE001 - wrong password or provider issue
             continue
         # Login accepted: find the matching user and require admin.
-        for user in await hass.auth.async_get_users():
-            if user.name and user.name.lower() == username.lower():
-                return user.is_admin
-        return False
+        return await _is_admin_user(hass, username)
     return False
 
 
@@ -64,6 +73,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     shell = options.get(CONF_SHELL) or DEFAULT_SHELL
     ssh_enabled = options.get(CONF_SSH_ENABLED, DEFAULT_SSH_ENABLED)
     ssh_port = options.get(CONF_SSH_PORT, DEFAULT_SSH_PORT)
+    allow_sftp = options.get(CONF_ALLOW_SFTP, DEFAULT_ALLOW_SFTP)
+    allow_port_forwarding = options.get(
+        CONF_ALLOW_PORT_FORWARDING, DEFAULT_ALLOW_PORT_FORWARDING
+    )
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["shell"] = shell
@@ -92,6 +105,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             int(ssh_port),
             shell,
             lambda u, p: _validate_ha_password(hass, u, p),
+            admin_check=lambda u: _is_admin_user(hass, u),
+            allow_sftp=allow_sftp,
+            allow_port_forwarding=allow_port_forwarding,
         )
     hass.data[DOMAIN]["ssh_server"] = ssh_server
     hass.data[DOMAIN]["entry_id"] = entry.entry_id
