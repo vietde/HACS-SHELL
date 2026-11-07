@@ -27,8 +27,9 @@ from .const import (
 )
 from .ssh_server import start_ssh_server
 from .views import (
-    LogsDownloadView,
-    LogsWebSocketView,
+    FilesDownloadView,
+    FilesListView,
+    FilesUploadView,
     TerminalAssetView,
     TerminalFrontendView,
     TerminalWebSocketView,
@@ -70,8 +71,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.http.register_view(TerminalFrontendView())
     hass.http.register_view(TerminalAssetView())
     hass.http.register_view(TerminalWebSocketView(hass))
-    hass.http.register_view(LogsWebSocketView(hass))
-    hass.http.register_view(LogsDownloadView(hass))
+    hass.http.register_view(FilesListView(hass))
+    hass.http.register_view(FilesDownloadView(hass))
+    hass.http.register_view(FilesUploadView(hass))
 
     frontend.async_register_built_in_panel(
         hass,

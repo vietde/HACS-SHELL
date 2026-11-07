@@ -19,9 +19,10 @@ memory-hungry stack — just the shell.
 - **SSH server** — connects with any SSH client on the port you choose
   (default **2222**, so it never clashes with the add-on's 22). Log in
   with your Home Assistant username and password; **admin users only**.
-- **Log viewer** — live tail of `home-assistant.log` with level filter
-  (Debug → Critical), text search, follow mode, and a one-click download
-  of the full log file.
+- **File manager** — browse `/config` right from the Terminal page:
+  navigate folders, click a file to download it, and upload files
+  straight into the folder you're in (existing files are overwritten).
+  Everything stays inside `/config`; `..` escapes are rejected.
 - **Native and light** — runs in HA Core's own process. A shell session
   is one PTY plus a websocket; idle cost is essentially zero.
 
@@ -41,8 +42,8 @@ memory-hungry stack — just the shell.
   it from inside Home Assistant while logged in.
 - **SSH:** `ssh -p 2222 <your-ha-username>@<ha-ip>`, password is your Home
   Assistant password. Admin accounts only.
-- **Logs:** Terminal → Logs tab. Change the level to cut the noise, or
-  Download log for the whole file.
+- **Files:** Terminal → Files tab. Browse `/config`, click a file to
+  download it, Upload to put files into the current folder.
 
 ## What the shell can (and cannot) do
 
@@ -78,6 +79,7 @@ host. That is the whole point (lightweight), and the one real limit:
 
 ## Status
 
-v0.1.0 — first release. The web terminal, SSH server and log viewer are
-all in. Not yet in: public-key SSH auth, SFTP, multiple saved terminal
-tabs, tmux-style persistent sessions (reconnect starts a fresh shell).
+v0.1.1 — the log viewer is removed (it never worked reliably) and
+replaced by the file manager. Not yet in: public-key SSH auth, SFTP,
+multiple saved terminal tabs, tmux-style persistent sessions (reconnect
+starts a fresh shell).

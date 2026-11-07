@@ -1,9 +1,13 @@
-"""HTTP views: terminal frontend, terminal + log websockets, log download.
+"""HTTP views: terminal frontend, terminal websocket, file manager.
 
 The terminal runs in the browser (xterm.js) and talks to Home Assistant
 over a websocket. Browsers cannot set an Authorization header on a
 websocket, so the token travels as a ``?token=`` query parameter and is
 validated here against HA's own auth — admin users only.
+
+The file manager (list / download / upload under /config) uses HA's
+normal authenticated API views: the frontend sends the Bearer token, so
+``requires_auth=True`` applies.
 """
 
 from __future__ import annotations
@@ -12,7 +16,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 from pathlib import Path
 
 from aiohttp import web
@@ -35,12 +38,6 @@ _ASSET_TYPES = {
     ".html": "text/html",
     ".map": "application/json",
 }
-
-_LOG_LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
-_LOG_LINE_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?\s+"
-    r"(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b"
-)
 
 
 def _validate_ws_user(hass: HomeAssistant, request: web.Request):
@@ -171,141 +168,139 @@ class TerminalWebSocketView(HomeAssistantView):
         return shell
 
 
-def _log_level_of(line: str, current: int) -> int:
-    """Level of a log line; continuation lines inherit the previous one."""
-    match = _LOG_LINE_RE.match(line)
-    if match:
-        return _LOG_LEVELS[match.group(1)]
-    return current
+def _config_base(hass: HomeAssistant) -> Path:
+    """The file manager is confined to the HA config folder."""
+    return Path(hass.config.path("")).resolve()
 
 
-class LogsWebSocketView(HomeAssistantView):
-    """Live tail of home-assistant.log over a websocket."""
+def _resolve_within_base(base: Path, rel: str) -> Path | None:
+    """Resolve a user-supplied relative path inside base.
 
-    url = "/api/ha_terminal/logs/ws"
-    name = "ha_terminal:logs_ws"
-    requires_auth = False
-
-    def __init__(self, hass: HomeAssistant) -> None:
-        self.hass = hass
-
-    @property
-    def _log_path(self) -> Path:
-        return Path(self.hass.config.path("home-assistant.log"))
-
-    async def get(self, request: web.Request) -> web.StreamResponse:
-        ws = web.WebSocketResponse(heartbeat=30)
-        await ws.prepare(request)
-        user = _validate_ws_user(self.hass, request)
-        if user is None:
-            await ws.close(code=WS_CLOSE_UNAUTHORIZED, message=b"unauthorized")
-            return ws
-
-        path = self._log_path
-        if not path.is_file():
-            await ws.send_str(json.dumps({"type": "error", "message": "home-assistant.log not found"}))
-            await ws.close()
-            return ws
-
-        min_level = _LOG_LEVELS["DEBUG"]
-        offset = 0
-        level_state = _LOG_LEVELS["INFO"]
-
-        async def _send(lines: list[str]) -> None:
-            nonlocal level_state
-            kept: list[str] = []
-            for line in lines:
-                level_state = _log_level_of(line, level_state)
-                if level_state >= min_level:
-                    kept.append(line)
-            if kept:
-                await ws.send_str(json.dumps({"type": "lines", "lines": kept}))
-
-        # History: last 300 lines.
-        try:
-            size = path.stat().st_size
-            start = max(0, size - 262144)
-            with path.open("r", encoding="utf-8", errors="replace") as handle:
-                handle.seek(start)
-                if start:
-                    handle.readline()  # drop the partial first line
-                history = handle.read().splitlines()[-300:]
-            offset = size
-            await _send(history)
-        except OSError as err:
-            await ws.send_str(json.dumps({"type": "error", "message": f"Could not read log: {err}"}))
-            await ws.close()
-            return ws
-
-        async def _watcher() -> None:
-            nonlocal offset
-            while not ws.closed:
-                await asyncio.sleep(0.5)
-                try:
-                    size = path.stat().st_size
-                except OSError:
-                    continue
-                if size < offset:
-                    offset = 0  # truncated / rotated
-                if size == offset:
-                    continue
-                try:
-                    with path.open("r", encoding="utf-8", errors="replace") as handle:
-                        handle.seek(offset)
-                        chunk = handle.read()
-                        offset = handle.tell()
-                except OSError:
-                    continue
-                if chunk:
-                    await _send(chunk.splitlines())
-
-        watcher = asyncio.ensure_future(_watcher())
-        try:
-            async for msg in ws:
-                if msg.type == web.WSMsgType.TEXT:
-                    try:
-                        payload = json.loads(msg.data)
-                    except (ValueError, TypeError):
-                        continue
-                    if payload.get("type") == "set_level":
-                        level = str(payload.get("level", "DEBUG")).upper()
-                        if level in _LOG_LEVELS:
-                            min_level = _LOG_LEVELS[level]
-                            # Re-send the tail under the new filter.
-                            try:
-                                size = path.stat().st_size
-                                start = max(0, size - 262144)
-                                with path.open("r", encoding="utf-8", errors="replace") as handle:
-                                    handle.seek(start)
-                                    if start:
-                                        handle.readline()
-                                    tail = handle.read().splitlines()[-300:]
-                                level_state = _LOG_LEVELS["INFO"]
-                                await _send(tail)
-                            except OSError:
-                                pass
-                elif msg.type in (web.WSMsgType.CLOSE, web.WSMsgType.ERROR):
-                    break
-        finally:
-            watcher.cancel()
-        return ws
+    Returns None for absolute paths, ``..`` escapes, and anything that
+    resolves outside base (including through symlinks).
+    """
+    if not rel or rel == ".":
+        return base
+    candidate = (base / rel).resolve()
+    if not candidate.is_relative_to(base):
+        return None
+    return candidate
 
 
-class LogsDownloadView(HomeAssistantView):
-    """Download the full log file. Authenticated like any HA API call."""
+def _rel_posix(base: Path, path: Path) -> str:
+    rel = path.relative_to(base).as_posix()
+    return "" if rel == "." else rel
 
-    url = "/api/ha_terminal/logs/download"
-    name = "ha_terminal:logs_download"
+
+class FilesListView(HomeAssistantView):
+    """List a directory under /config: ``GET ?path=<relative dir>``."""
+
+    url = "/api/ha_terminal/files/list"
+    name = "ha_terminal:files_list"
     requires_auth = True
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
 
     async def get(self, request: web.Request) -> web.StreamResponse:
-        path = Path(self.hass.config.path("home-assistant.log"))
-        if not path.is_file():
-            return self.json_message("home-assistant.log not found", status_code=404)
-        return web.FileResponse(
-            path,
-            headers={"Content-Disposition": 'attachment; filename="home-assistant.log"'},
+        base = _config_base(self.hass)
+        target = _resolve_within_base(base, request.query.get("path", ""))
+        if target is None or not target.is_dir():
+            return self.json_message("directory not found", status_code=404)
+        dirs: list[dict] = []
+        files: list[dict] = []
+        try:
+            entries = sorted(target.iterdir(), key=lambda p: p.name.lower())
+        except OSError as err:
+            return self.json_message(f"cannot list directory: {err}", status_code=500)
+        for entry in entries:
+            try:
+                stat = entry.stat()
+            except OSError:
+                continue
+            if entry.is_dir():
+                dirs.append({"name": entry.name})
+            elif entry.is_file():
+                files.append(
+                    {
+                        "name": entry.name,
+                        "size": stat.st_size,
+                        "modified": int(stat.st_mtime),
+                    }
+                )
+        return self.json(
+            {
+                "path": "" if target == base else _rel_posix(base, target),
+                "dirs": dirs,
+                "files": files,
+            }
         )
+
+
+class FilesDownloadView(HomeAssistantView):
+    """Download one file under /config: ``GET ?path=<relative file>``."""
+
+    url = "/api/ha_terminal/files/download"
+    name = "ha_terminal:files_download"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+
+    async def get(self, request: web.Request) -> web.StreamResponse:
+        base = _config_base(self.hass)
+        target = _resolve_within_base(base, request.query.get("path", ""))
+        if target is None or not target.is_file():
+            return self.json_message("file not found", status_code=404)
+        return web.FileResponse(
+            target,
+            headers={"Content-Disposition": f'attachment; filename="{target.name}"'},
+        )
+
+
+class FilesUploadView(HomeAssistantView):
+    """Upload files into a directory under /config.
+
+    ``POST ?path=<relative dir>`` with a multipart form (field "file",
+    one or more). Existing files are overwritten.
+    """
+
+    url = "/api/ha_terminal/files/upload"
+    name = "ha_terminal:files_upload"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+
+    async def post(self, request: web.Request) -> web.StreamResponse:
+        base = _config_base(self.hass)
+        target_dir = _resolve_within_base(base, request.query.get("path", ""))
+        if target_dir is None or not target_dir.is_dir():
+            return self.json_message("directory not found", status_code=404)
+        try:
+            form = await request.post()
+        except Exception as err:  # noqa: BLE001 - malformed multipart body
+            return self.json_message(f"cannot read upload: {err}", status_code=400)
+        uploaded: list[str] = []
+        for field in form.values():
+            if not hasattr(field, "file") or not getattr(field, "filename", None):
+                continue
+            filename = Path(field.filename).name
+            if not filename or filename in (".", ".."):
+                continue
+            dest = (target_dir / filename).resolve()
+            if not dest.is_relative_to(base):
+                continue
+            try:
+                with dest.open("wb") as out:
+                    while True:
+                        chunk = field.file.read(65536)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+            except OSError as err:
+                return self.json_message(f"cannot save {filename}: {err}", status_code=500)
+            uploaded.append(filename)
+        if not uploaded:
+            return self.json_message("no files uploaded", status_code=400)
+        return self.json({"uploaded": uploaded, "path": _rel_posix(base, target_dir)})

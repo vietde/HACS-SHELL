@@ -1,7 +1,8 @@
-/* HA Terminal frontend: xterm.js terminal + live log tail.
+/* HA Terminal frontend: xterm.js terminal + /config file manager.
  * Same origin as Home Assistant, so the HA access token can be read from
- * localStorage ("hassTokens") and sent as ?token= on the websockets.
- * The server validates the token and requires an admin user. */
+ * localStorage ("hassTokens"). The terminal websocket takes it as ?token=;
+ * the file API calls send it as a Bearer header. The server validates the
+ * token and requires an admin user. */
 (function () {
   "use strict";
 
@@ -117,114 +118,145 @@
   });
   document.getElementById("btn-clear").addEventListener("click", function () { term.clear(); });
 
-  /* ---------------- Logs ---------------- */
-  var logWs = null;
-  var logLines = [];
-  var MAX_LOG_LINES = 2000;
+  /* ---------------- Files (/config) ---------------- */
+  var currentPath = "";
+  var filesList = document.getElementById("files-list");
+  var filesPath = document.getElementById("files-path");
+  var filesStatus = document.getElementById("files-status");
 
-  var logOut = document.getElementById("log-output");
-  var logSearch = document.getElementById("log-search");
-  var logLevel = document.getElementById("log-level");
-  var logFollow = document.getElementById("log-follow");
-  var logCount = document.getElementById("log-count");
-
-  function levelOf(line) {
-    var m = line.match(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b/);
-    return m ? m[1] : null;
+  function fmtSize(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
   }
 
-  function renderLogs() {
-    var needle = logSearch.value.trim().toLowerCase();
-    var html = "";
-    var shown = 0;
-    var currentLevel = "INFO";
-    for (var i = 0; i < logLines.length; i++) {
-      var line = logLines[i];
-      var lvl = levelOf(line);
-      if (lvl) currentLevel = lvl;
-      if (needle && line.toLowerCase().indexOf(needle) === -1) continue;
-      shown++;
-      var cls = "lvl-" + currentLevel;
-      var esc = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      if (needle) {
-        var idx = esc.toLowerCase().indexOf(needle);
-        if (idx !== -1) {
-          esc = esc.slice(0, idx) + "<mark>" + esc.slice(idx, idx + needle.length) + "</mark>" + esc.slice(idx + needle.length);
-        }
-      }
-      html += '<span class="' + cls + '">' + esc + "</span>\n";
-    }
-    logOut.innerHTML = html;
-    logCount.textContent = shown + " / " + logLines.length + " lines";
-    if (logFollow.checked) logOut.scrollTop = logOut.scrollHeight;
+  function joinPath(dir, name) {
+    return dir ? dir + "/" + name : name;
   }
 
-  function connectLogs() {
+  function parentPath(path) {
+    var i = path.lastIndexOf("/");
+    return i === -1 ? "" : path.slice(0, i);
+  }
+
+  function setFilesStatus(text) {
+    filesStatus.textContent = text;
+    if (text) setTimeout(function () { filesStatus.textContent = ""; }, 4000);
+  }
+
+  function loadFiles(path) {
     var token = getToken();
-    if (!token || (logWs && logWs.readyState <= 1)) return;
-    logWs = new WebSocket(WS_BASE + "/api/ha_terminal/logs/ws?token=" + encodeURIComponent(token));
-    logWs.onmessage = function (ev) {
-      try {
-        var msg = JSON.parse(ev.data);
-        if (msg.type === "lines") {
-          for (var i = 0; i < msg.lines.length; i++) logLines.push(msg.lines[i]);
-          if (logLines.length > MAX_LOG_LINES) logLines.splice(0, logLines.length - MAX_LOG_LINES);
-          renderLogs();
-        } else if (msg.type === "error") {
-          logLines.push("ERROR: " + msg.message);
-          renderLogs();
+    if (!token) {
+      filesList.innerHTML = '<div class="files-empty">No Home Assistant session — log into Home Assistant first.</div>';
+      return;
+    }
+    fetch("/api/ha_terminal/files/list?path=" + encodeURIComponent(path), {
+      headers: { Authorization: "Bearer " + token },
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("list failed (" + r.status + ")");
+        return r.json();
+      })
+      .then(function (data) {
+        currentPath = data.path;
+        filesPath.textContent = "/config" + (currentPath ? "/" + currentPath : "");
+        var html = "";
+        data.dirs.forEach(function (d) {
+          var p = joinPath(currentPath, d.name);
+          html += '<div class="file-row dir" data-path="' + p.replace(/"/g, "&quot;") + '">' +
+            '<span class="file-icon">📁</span><span class="file-name">' + d.name + '</span>' +
+            '<span class="file-meta"></span></div>';
+        });
+        data.files.forEach(function (f) {
+          var p = joinPath(currentPath, f.name);
+          html += '<div class="file-row" data-path="' + p.replace(/"/g, "&quot;") + '">' +
+            '<span class="file-icon">📄</span><span class="file-name">' + f.name + '</span>' +
+            '<span class="file-meta">' + fmtSize(f.size) + "</span></div>";
+        });
+        if (!data.dirs.length && !data.files.length) {
+          html = '<div class="files-empty">Empty folder.</div>';
         }
-      } catch (e) { /* ignore */ }
-    };
-    logWs.onclose = function () {
-      setTimeout(function () {
-        if (!document.getElementById("view-logs").classList.contains("hidden")) connectLogs();
-      }, 3000);
-    };
+        filesList.innerHTML = html;
+        filesList.querySelectorAll(".file-row").forEach(function (row) {
+          row.addEventListener("click", function () {
+            var p = row.getAttribute("data-path");
+            if (row.classList.contains("dir")) {
+              loadFiles(p);
+            } else {
+              downloadFile(p);
+            }
+          });
+        });
+      })
+      .catch(function (err) {
+        filesList.innerHTML = '<div class="files-empty">' + err.message + "</div>";
+      });
   }
 
-  logLevel.addEventListener("change", function () {
-    if (logWs && logWs.readyState === WebSocket.OPEN) {
-      logWs.send(JSON.stringify({ type: "set_level", level: logLevel.value }));
-    }
-  });
-  logSearch.addEventListener("input", renderLogs);
-  document.getElementById("btn-log-clear").addEventListener("click", function () {
-    logLines = [];
-    renderLogs();
-  });
-  document.getElementById("btn-download").addEventListener("click", function () {
+  function downloadFile(path) {
     var token = getToken();
     if (!token) return;
-    fetch("/api/ha_terminal/logs/download", { headers: { Authorization: "Bearer " + token } })
-      .then(function (r) { if (!r.ok) throw new Error("download failed"); return r.blob(); })
+    fetch("/api/ha_terminal/files/download?path=" + encodeURIComponent(path), {
+      headers: { Authorization: "Bearer " + token },
+    })
+      .then(function (r) { if (!r.ok) throw new Error("download failed (" + r.status + ")"); return r.blob(); })
       .then(function (blob) {
         var a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = "home-assistant.log";
+        a.download = path.split("/").pop();
         a.click();
         setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
       })
-      .catch(function () { /* ignore */ });
+      .catch(function (err) { setFilesStatus(err.message); });
+  }
+
+  document.getElementById("btn-files-up").addEventListener("click", function () {
+    loadFiles(parentPath(currentPath));
+  });
+  document.getElementById("btn-files-refresh").addEventListener("click", function () {
+    loadFiles(currentPath);
+  });
+  document.getElementById("files-upload").addEventListener("change", function (ev) {
+    var token = getToken();
+    var input = ev.target;
+    if (!token || !input.files.length) return;
+    var form = new FormData();
+    for (var i = 0; i < input.files.length; i++) form.append("file", input.files[i]);
+    setFilesStatus("Uploading…");
+    fetch("/api/ha_terminal/files/upload?path=" + encodeURIComponent(currentPath), {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+      body: form,
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("upload failed (" + r.status + ")");
+        return r.json();
+      })
+      .then(function (data) {
+        setFilesStatus("Uploaded: " + data.uploaded.join(", "));
+        loadFiles(currentPath);
+      })
+      .catch(function (err) { setFilesStatus(err.message); })
+      .finally(function () { input.value = ""; });
   });
 
   /* ---------------- Tabs ---------------- */
   function showTab(which) {
     var isTerm = which === "terminal";
     document.getElementById("view-terminal").classList.toggle("hidden", !isTerm);
-    document.getElementById("view-logs").classList.toggle("hidden", isTerm);
+    document.getElementById("view-files").classList.toggle("hidden", isTerm);
     document.getElementById("tab-terminal").classList.toggle("active", isTerm);
-    document.getElementById("tab-logs").classList.toggle("active", !isTerm);
+    document.getElementById("tab-files").classList.toggle("active", !isTerm);
     if (isTerm) {
       try { fitAddon.fit(); } catch (e) { /* ignore */ }
       termSendResize();
       term.focus();
     } else {
-      connectLogs();
+      loadFiles(currentPath);
     }
   }
   document.getElementById("tab-terminal").addEventListener("click", function () { showTab("terminal"); });
-  document.getElementById("tab-logs").addEventListener("click", function () { showTab("logs"); });
+  document.getElementById("tab-files").addEventListener("click", function () { showTab("files"); });
 
   /* ---------------- Boot ---------------- */
   fitAddon.fit();

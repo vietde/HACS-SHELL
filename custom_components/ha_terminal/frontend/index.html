@@ -12,13 +12,12 @@
   <div class="brand">⌨️ HA Terminal</div>
   <nav class="tabs">
     <button id="tab-terminal" class="tab active">Terminal</button>
-    <button id="tab-logs" class="tab">Logs</button>
+    <button id="tab-files" class="tab">Files</button>
   </nav>
   <div class="actions">
     <span id="status" class="status disconnected">Disconnected</span>
     <button id="btn-reconnect" class="btn" title="Reconnect the terminal">Reconnect</button>
     <button id="btn-clear" class="btn" title="Clear the terminal screen">Clear</button>
-    <button id="btn-download" class="btn" title="Download the full log file">Download log</button>
   </div>
 </header>
 
@@ -32,25 +31,17 @@
   </div>
 </main>
 
-<main id="view-logs" class="view hidden">
-  <div class="logbar">
-    <label>Level
-      <select id="log-level">
-        <option value="DEBUG" selected>Debug</option>
-        <option value="INFO">Info</option>
-        <option value="WARNING">Warning</option>
-        <option value="ERROR">Error</option>
-        <option value="CRITICAL">Critical</option>
-      </select>
+<main id="view-files" class="view hidden">
+  <div class="filebar">
+    <button id="btn-files-up" class="btn" title="Go to the parent folder">⬆ Up</button>
+    <span id="files-path" class="files-path">/config</span>
+    <button id="btn-files-refresh" class="btn">Refresh</button>
+    <label class="btn upload-label">Upload
+      <input id="files-upload" type="file" multiple hidden>
     </label>
-    <label class="search">Search
-      <input id="log-search" type="text" placeholder="filter lines…" autocomplete="off">
-    </label>
-    <label class="check"><input id="log-follow" type="checkbox" checked> Follow</label>
-    <button id="btn-log-clear" class="btn">Clear view</button>
-    <span id="log-count" class="log-count"></span>
+    <span id="files-status" class="files-status"></span>
   </div>
-  <pre id="log-output"></pre>
+  <div id="files-list" class="files-list"></div>
 </main>
 
 <script src="/api/ha_terminal/assets/xterm.min.js"></script>
