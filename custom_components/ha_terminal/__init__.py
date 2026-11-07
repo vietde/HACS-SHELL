@@ -1,18 +1,24 @@
-"""HA Terminal — a native terminal + log viewer that lives inside Home
+"""HA Terminal — a native terminal + file manager that lives inside Home
 Assistant (no add-on container).
 
 Runs entirely in HA Core: a full-screen web terminal (xterm.js over a
 websocket to a PTY shell in the container), an SSH server on the
-configured port, and a live tail of home-assistant.log. Lighter than the
-Advanced SSH & Web Terminal add-on because there is no second container,
-no ttyd/tmux stack — just the shell, in-process.
+configured port, and a /config file manager with an SSH-keys box.
+Lighter than the Advanced SSH & Web Terminal add-on because there is no
+second container, no ttyd/tmux stack — just the shell, in-process.
+
+The sidebar panel is a custom element (panel.js): HA hands it the `hass`
+object, and it passes the access token to the terminal page inside its
+iframe via postMessage. The page cannot read the token from localStorage
+on its own — the HA mobile app keeps tokens in native storage, so
+localStorage is empty there.
 """
 
 from __future__ import annotations
 
 import logging
 
-from homeassistant.components import frontend
+from homeassistant.components import frontend, panel_custom
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -90,13 +96,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.http.register_view(FilesUploadView(hass))
     hass.http.register_view(AuthorizedKeysView(hass))
 
-    frontend.async_register_built_in_panel(
+    # Sidebar panel as a custom element (not a plain iframe panel): the
+    # element receives the `hass` object from the frontend and passes the
+    # access token to the terminal page via postMessage. A plain iframe
+    # panel cannot do that, and the page cannot read the token from
+    # localStorage in the HA mobile app (see panel.js).
+    await panel_custom.async_register_panel(
         hass,
-        "iframe",
-        "Terminal",
-        "mdi:console-terminal",
-        frontend_url_path=PANEL_URL_PATH,
-        config={"url": "/api/ha_terminal/"},
+        PANEL_URL_PATH,
+        "ha-terminal-panel",
+        sidebar_title="Terminal",
+        sidebar_icon="mdi:console-terminal",
+        module_url="/api/ha_terminal/assets/panel.js",
         require_admin=True,
     )
 

@@ -1,22 +1,53 @@
 /* HA Terminal frontend: xterm.js terminal + /config file manager.
- * Same origin as Home Assistant, so the HA access token can be read from
- * localStorage ("hassTokens"). The terminal websocket takes it as ?token=;
- * the file API calls send it as a Bearer header. The server validates the
- * token and requires an admin user. */
+ * Same origin as Home Assistant. The access token comes from, in order:
+ *   1. a ?token= query parameter,
+ *   2. a postMessage from the sidebar panel element (panel.js), which gets
+ *      the token from the `hass` object — this is the path that works in
+ *      the HA mobile app, where localStorage holds no token,
+ *   3. localStorage ("hassTokens") — the desktop-browser path.
+ * The terminal websocket takes the token as ?token=; the file API calls
+ * send it as a Bearer header. The server validates the token and
+ * requires an admin user. */
 (function () {
   "use strict";
 
   var WS_BASE = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 
+  var haToken = null; // token posted by the sidebar panel element
+  var tokenWaitedMs = 0; // ms spent waiting for a token at boot
+  var tokenRefreshTried = false;
+
+  function requestTokenFromParent() {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "ha-terminal-need-token" }, location.origin);
+      }
+    } catch (e) { /* ignore: no parent to ask */ }
+  }
+
   function getToken() {
     try {
+      var m = /[?&]token=([^&]+)/.exec(location.search);
+      if (m) return decodeURIComponent(m[1]);
+    } catch (e) { /* ignore */ }
+    if (haToken) return haToken;
+    try {
       var raw = localStorage.getItem("hassTokens");
-      if (!raw) return null;
-      return JSON.parse(raw).access_token || null;
+      if (raw) return JSON.parse(raw).access_token || null;
     } catch (e) {
       return null;
     }
+    return null;
   }
+
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== location.origin) return;
+    var d = ev.data || {};
+    if (d.type === "ha-terminal-token" && d.token) {
+      haToken = d.token;
+      if (!termWs || termWs.readyState !== WebSocket.OPEN) connectTerminal();
+    }
+  });
 
   function showOverlay(text) {
     document.getElementById("overlay-text").textContent = text;
@@ -55,15 +86,27 @@
   function connectTerminal() {
     var token = getToken();
     if (!token) {
+      // No token yet — the sidebar panel posts one (the HA mobile app
+      // keeps tokens out of localStorage). Ask for it and wait a little
+      // before giving up, instead of failing on the first paint.
+      requestTokenFromParent();
+      if (tokenWaitedMs < 10000) {
+        tokenWaitedMs += 500;
+        setStatus(false, "Connecting…");
+        setTimeout(connectTerminal, 500);
+        return;
+      }
       setStatus(false, "No HA session — open Home Assistant first");
       showOverlay("No Home Assistant session found. Open this page from inside Home Assistant (sidebar → Terminal) while logged in.");
       return;
     }
+    tokenWaitedMs = 0;
     setStatus(false, "Connecting…");
     hideOverlay();
     termWs = new WebSocket(WS_BASE + "/api/ha_terminal/ws?token=" + encodeURIComponent(token));
     termWs.binaryType = "arraybuffer";
     termWs.onopen = function () {
+      tokenRefreshTried = false;
       setStatus(true, "Connected");
       fitAddon.fit();
       termSendResize();
@@ -81,11 +124,19 @@
     };
     termWs.onclose = function (ev) {
       setStatus(false, "Disconnected");
-      if (termWantOpen) {
-        showOverlay(ev.code === 4401
-          ? "Session expired or not an admin. Reload Home Assistant and try again."
-          : "Terminal closed. The shell may have exited.");
+      if (!termWantOpen) return;
+      if (ev.code === 4401 && !tokenRefreshTried && window.parent && window.parent !== window) {
+        // Token expired — ask the panel for a fresh one and retry once
+        // before telling the user the session is gone.
+        tokenRefreshTried = true;
+        setStatus(false, "Session expired — refreshing…");
+        requestTokenFromParent();
+        setTimeout(connectTerminal, 500);
+        return;
       }
+      showOverlay(ev.code === 4401
+        ? "Session expired or not an admin. Reload Home Assistant and try again."
+        : "Terminal closed. The shell may have exited.");
     };
     termWs.onerror = function () {
       setStatus(false, "Connection error");

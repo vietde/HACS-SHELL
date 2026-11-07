@@ -1,6 +1,6 @@
 # HA Terminal
 
-A terminal and log viewer that lives **inside** Home Assistant — a HACS
+A terminal and file manager that lives **inside** Home Assistant — a HACS
 integration, not an add-on.
 
 The Advanced SSH & Web Terminal add-on runs a whole second container
@@ -15,7 +15,10 @@ memory-hungry stack — just the shell.
 - **Full-screen web terminal** — a Terminal item in the sidebar opens a
   full-screen [xterm.js](https://xtermjs.org/) terminal (bundled, works
   offline). Resize-aware, reconnect button, Ctrl-C/Ctrl-D work like a
-  real terminal.
+  real terminal. The sidebar panel is a custom element that hands the
+  page your access token, so it works in the HA mobile app too (the app
+  keeps tokens out of localStorage, where a plain iframe panel would
+  find nothing).
 - **SSH server** — connects with any SSH client on the port you choose
   (default **2222**, so it never clashes with the add-on's 22). Log in
   with your Home Assistant username and password, or with a public key
@@ -113,14 +116,18 @@ host. That is the whole point (lightweight), and the one real limit:
 - `custom_components/ha_terminal/` — the integration
   (`__init__.py`, `config_flow.py`, `terminal.py` PTY sessions,
   `views.py` HTTP + websockets, `keys.py` authorized-keys logic,
-  `ssh_server.py` asyncssh server, `frontend/` xterm.js UI)
+  `ssh_server.py` asyncssh server, `frontend/` xterm.js UI + panel.js
+  custom sidebar element)
 - `hacs.json` — HACS repository metadata
 
 ## Status
 
-v0.1.3 — an SSH keys box at the bottom of the Files tab: paste a public
-key to add it to `/config/.ssh/authorized_keys` (validated, deduplicated,
-private keys refused), list installed keys with fingerprints, remove any
-of them. The file-manager API is now admin only too (it previously only
-required any authenticated user). Not yet in: multiple saved terminal
-tabs, tmux-style persistent sessions (reconnect starts a fresh shell).
+v0.1.4 — the sidebar panel is a custom element now, not a plain iframe:
+it gets the `hass` object from the frontend and passes the access token
+to the terminal page via postMessage. That fixes the mobile app, where
+the page showed "No Home Assistant session found" because the app keeps
+tokens out of localStorage. The page still falls back to localStorage in
+a desktop browser, asks the panel for a fresh token when a session
+expires, and the topbar now wraps on narrow screens instead of cutting
+off. Also fixed: the SSH host-key load and asyncssh import no longer run
+on the event loop (HA had flagged them as blocking calls).

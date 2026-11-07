@@ -1,1 +1,1 @@
-{"codeowners":[],"config_flow":true,"documentation":"https://github.com/vietde/hacs-shell","domain":"ha_terminal","integration_type":"service","iot_class":"local_push","name":"HA Terminal","requirements":["asyncssh==2.24.1"],"version":"0.1.3"}
+{"codeowners":[],"config_flow":true,"documentation":"https://github.com/vietde/hacs-shell","domain":"ha_terminal","integration_type":"service","iot_class":"local_push","name":"HA Terminal","requirements":["asyncssh==2.24.1"],"dependencies":["frontend","panel_custom"],"version":"0.1.4"}

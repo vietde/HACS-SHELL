@@ -40,6 +40,32 @@ def _load_authorized_keys(path: Path):
         return None
 
 
+async def _run_blocking(hass, fn, *args):
+    """Run blocking work off the event loop.
+
+    Home Assistant flags blocking calls (file reads, imports that read
+    files) inside the event loop. ``hass.async_add_executor_job`` runs
+    them in a thread; without a real hass (offline tests) it just calls
+    the function directly.
+    """
+    executor = getattr(hass, "async_add_executor_job", None)
+    if executor is not None:
+        return await executor(fn, *args)
+    return fn(*args)
+
+
+def _load_or_create_host_key(asyncssh, key_path: Path):
+    """Read the host key, or generate and save one. Blocking I/O only —
+    call via _run_blocking."""
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    if key_path.is_file():
+        return asyncssh.read_private_key(str(key_path)), False
+    host_key = asyncssh.generate_private_key("ssh-ed25519")
+    host_key.write_private_key(str(key_path))
+    os.chmod(key_path, 0o600)
+    return host_key, True
+
+
 async def start_ssh_server(
     hass,
     port: int,
@@ -51,7 +77,12 @@ async def start_ssh_server(
 ):
     """Start the SSH server. Returns the server, or None on failure."""
     try:
-        import asyncssh
+        # Imported off the event loop: importing asyncssh reads files
+        # (fido2 data, shared-library globs) and HA flags that as a
+        # blocking call.
+        import importlib
+
+        asyncssh = await _run_blocking(hass, importlib.import_module, "asyncssh")
     except ImportError as err:
         _LOGGER.warning("HA Terminal: asyncssh is not available, SSH server disabled: %s", err)
         return None
@@ -61,13 +92,10 @@ async def start_ssh_server(
     key_path = key_dir / "ha_terminal_host_key"
     authorized_keys_path = key_dir / "authorized_keys"
     try:
-        key_dir.mkdir(parents=True, exist_ok=True)
-        if key_path.is_file():
-            host_key = asyncssh.read_private_key(str(key_path))
-        else:
-            host_key = asyncssh.generate_private_key("ssh-ed25519")
-            host_key.write_private_key(str(key_path))
-            os.chmod(key_path, 0o600)
+        host_key, created = await _run_blocking(
+            hass, _load_or_create_host_key, asyncssh, key_path
+        )
+        if created:
             _LOGGER.info("HA Terminal: generated SSH host key at %s", key_path)
     except Exception as err:  # noqa: BLE001 - without a host key there is no server
         _LOGGER.warning("HA Terminal: could not load host key, SSH server disabled: %s", err)
@@ -184,7 +212,10 @@ async def start_ssh_server(
             try:
                 if admin_check is not None and not await admin_check(username):
                     return False
-                authorized = _load_authorized_keys(authorized_keys_path)
+                # File read — off the event loop.
+                authorized = await _run_blocking(
+                    hass, _load_authorized_keys, authorized_keys_path
+                )
                 if authorized is None:
                     return False
                 # Empty host/addr: keys without from= restrictions match;
