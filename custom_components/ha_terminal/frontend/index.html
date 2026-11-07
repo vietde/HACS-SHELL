@@ -42,6 +42,19 @@
     <span id="files-status" class="files-status"></span>
   </div>
   <div id="files-list" class="files-list"></div>
+  <section class="keys-section">
+    <h2>SSH keys</h2>
+    <p class="keys-hint">Paste a public key to log in over SSH without a password.
+      Keys are stored in <code>/config/.ssh/authorized_keys</code> and only work for
+      Home Assistant admin users.</p>
+    <textarea id="keys-input" rows="3" spellcheck="false"
+      placeholder="ssh-ed25519 AAAA... you@laptop"></textarea>
+    <div class="keys-row">
+      <button id="btn-keys-add" class="btn primary">Add key</button>
+      <span id="keys-status" class="files-status"></span>
+    </div>
+    <div id="keys-list" class="keys-list"></div>
+  </section>
 </main>
 
 <script src="/api/ha_terminal/assets/xterm.min.js"></script>

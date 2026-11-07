@@ -240,6 +240,100 @@
       .finally(function () { input.value = ""; });
   });
 
+  /* ---------------- SSH keys (/config/.ssh/authorized_keys) ---------------- */
+  var keysList = document.getElementById("keys-list");
+  var keysInput = document.getElementById("keys-input");
+  var keysStatus = document.getElementById("keys-status");
+
+  function setKeysStatus(text) {
+    keysStatus.textContent = text;
+    if (text) setTimeout(function () { keysStatus.textContent = ""; }, 5000);
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function renderKeys(keys) {
+    if (!keys.length) {
+      keysList.innerHTML = '<div class="keys-empty">No SSH keys yet — paste one above to enable passwordless login.</div>';
+      return;
+    }
+    var html = "";
+    keys.forEach(function (k) {
+      var label = escHtml(k.key_type) + (k.comment ? " · " + escHtml(k.comment) : "");
+      var fp = escHtml(k.fingerprint || "");
+      html += '<div class="key-row">' +
+        '<span class="key-icon">🔑</span>' +
+        '<span class="key-info"><span class="key-label">' + label + '</span>' +
+        '<span class="key-fp">' + fp + '</span></span>' +
+        '<button class="btn key-remove" data-fp="' + fp + '">Remove</button></div>';
+    });
+    keysList.innerHTML = html;
+    keysList.querySelectorAll(".key-remove").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        removeKey(btn.getAttribute("data-fp"));
+      });
+    });
+  }
+
+  function loadKeys() {
+    var token = getToken();
+    if (!token) {
+      keysList.innerHTML = '<div class="keys-empty">No Home Assistant session — log into Home Assistant first.</div>';
+      return;
+    }
+    fetch("/api/ha_terminal/files/authorized_keys", {
+      headers: { Authorization: "Bearer " + token },
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("keys list failed (" + r.status + ")");
+        return r.json();
+      })
+      .then(function (data) { renderKeys(data.keys || []); })
+      .catch(function (err) {
+        keysList.innerHTML = '<div class="keys-empty">' + escHtml(err.message) + "</div>";
+      });
+  }
+
+  function addKey() {
+    var token = getToken();
+    var line = keysInput.value.trim();
+    if (!token || !line) return;
+    setKeysStatus("Adding…");
+    fetch("/api/ha_terminal/files/authorized_keys", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ key: line }),
+    })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.message || "add failed (" + r.status + ")"); return d; }); })
+      .then(function (data) {
+        keysInput.value = "";
+        setKeysStatus(data.message || "Key added.");
+        renderKeys(data.keys || []);
+      })
+      .catch(function (err) { setKeysStatus(err.message); });
+  }
+
+  function removeKey(fingerprint) {
+    var token = getToken();
+    if (!token || !fingerprint) return;
+    fetch("/api/ha_terminal/files/authorized_keys", {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ fingerprint: fingerprint }),
+    })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.message || "remove failed (" + r.status + ")"); return d; }); })
+      .then(function (data) {
+        setKeysStatus(data.message || "Key removed.");
+        renderKeys(data.keys || []);
+      })
+      .catch(function (err) { setKeysStatus(err.message); });
+  }
+
+  document.getElementById("btn-keys-add").addEventListener("click", addKey);
+
   /* ---------------- Tabs ---------------- */
   function showTab(which) {
     var isTerm = which === "terminal";
@@ -253,6 +347,7 @@
       term.focus();
     } else {
       loadFiles(currentPath);
+      loadKeys();
     }
   }
   document.getElementById("tab-terminal").addEventListener("click", function () { showTab("terminal"); });

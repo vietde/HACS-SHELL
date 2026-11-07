@@ -35,6 +35,11 @@ memory-hungry stack — just the shell.
   navigate folders, click a file to download it, and upload files
   straight into the folder you're in (existing files are overwritten).
   Everything stays inside `/config`; `..` escapes are rejected.
+- **SSH keys box** — at the bottom of the Files tab: paste a public key
+  and it is validated and added to `/config/.ssh/authorized_keys`
+  (duplicates refused, private keys refused). The box also lists the
+  keys already installed, with a Remove button for each. Admin users
+  only.
 - **Native and light** — runs in HA Core's own process. A shell session
   is one PTY plus a websocket; idle cost is essentially zero.
 
@@ -54,11 +59,13 @@ memory-hungry stack — just the shell.
   it from inside Home Assistant while logged in.
 - **SSH:** `ssh -p 2222 <your-ha-username>@<ha-ip>`, password is your Home
   Assistant password. Admin accounts only.
-- **Public key:** generate a key (`ssh-keygen -t ed25519`), then put the
-  `.pub` line into `/config/.ssh/authorized_keys` (via the Files tab or
-  SFTP). After that, `ssh -p 2222 <your-ha-username>@<ha-ip>` logs in
-  without a password. Keys with `from=` restrictions are not honoured
-  (they are rejected — safe failure).
+- **Public key:** generate a key (`ssh-keygen -t ed25519`), then paste
+  the `.pub` line into the **SSH keys** box at the bottom of the Files
+  tab — or put it in `/config/.ssh/authorized_keys` yourself (via the
+  Files tab upload or SFTP). After that, `ssh -p 2222
+  <your-ha-username>@<ha-ip>` logs in without a password. Keys with
+  `from=` restrictions are not honoured (they are rejected — safe
+  failure).
 - **SFTP:** `sftp -P 2222 <your-ha-username>@<ha-ip>` — you land in
   `/config`. Or point FileZilla/WinSCP at the same host/port with SFTP
   protocol. Downloads and uploads stay inside `/config`.
@@ -83,9 +90,10 @@ host. That is the whole point (lightweight), and the one real limit:
 
 ## Security
 
-- The web terminal and the log viewer require a valid Home Assistant
-  access token **and** an admin user. Opening the page without logging
-  into HA gets you nothing.
+- The web terminal requires a valid Home Assistant access token **and**
+  an admin user. Opening the page without logging into HA gets you
+  nothing. The file manager and the SSH keys box are admin only too
+  (the API enforces it, not just the sidebar panel).
 - The SSH server authenticates against Home Assistant accounts (admin
   only), by password or by a key in `/config/.ssh/authorized_keys`.
   No separate password to manage, no anonymous access. The host
@@ -104,15 +112,15 @@ host. That is the whole point (lightweight), and the one real limit:
 
 - `custom_components/ha_terminal/` — the integration
   (`__init__.py`, `config_flow.py`, `terminal.py` PTY sessions,
-  `views.py` HTTP + websockets, `ssh_server.py` asyncssh server,
-  `frontend/` xterm.js UI)
+  `views.py` HTTP + websockets, `keys.py` authorized-keys logic,
+  `ssh_server.py` asyncssh server, `frontend/` xterm.js UI)
 - `hacs.json` — HACS repository metadata
 
 ## Status
 
-v0.1.2 — port forwarding (`ssh -L` / `-R`, off by default), SFTP
-(chrooted to `/config`), and public-key auth via
-`/config/.ssh/authorized_keys` (admin users only). All three are covered
-by offline tests (key login incl. refusals, SFTP put/get + chroot
-escape, forwarding allow/deny). Not yet in: multiple saved terminal
+v0.1.3 — an SSH keys box at the bottom of the Files tab: paste a public
+key to add it to `/config/.ssh/authorized_keys` (validated, deduplicated,
+private keys refused), list installed keys with fingerprints, remove any
+of them. The file-manager API is now admin only too (it previously only
+required any authenticated user). Not yet in: multiple saved terminal
 tabs, tmux-style persistent sessions (reconnect starts a fresh shell).

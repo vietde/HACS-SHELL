@@ -7,7 +7,10 @@ validated here against HA's own auth — admin users only.
 
 The file manager (list / download / upload under /config) uses HA's
 normal authenticated API views: the frontend sends the Bearer token, so
-``requires_auth=True`` applies.
+``requires_auth=True`` applies — and the handlers additionally require
+an admin user, since /config holds secrets. The authorized-keys view
+(paste a public key into /config/.ssh/authorized_keys) is admin only
+for the same reason: a key grants SSH access.
 """
 
 from __future__ import annotations
@@ -20,12 +23,14 @@ from pathlib import Path
 
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.http.const import KEY_HASS_USER
 from homeassistant.core import HomeAssistant
 
 from .const import (
     DEFAULT_CWD,
     WS_CLOSE_UNAUTHORIZED,
 )
+from .keys import add_key, authorized_keys_path, list_keys, remove_key
 from .terminal import TerminalSession, default_shell
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,6 +60,21 @@ def _validate_ws_user(hass: HomeAssistant, request: web.Request):
     if user is None or not user.is_admin:
         return None
     return user
+
+
+def _is_admin(request: web.Request) -> bool:
+    """True when the request's authenticated HA user is an admin.
+
+    ``requires_auth=True`` views get the user from HA's auth middleware
+    (``request[KEY_HASS_USER]``). File browsing and key management touch
+    /config (and authorized_keys grants SSH access), so they are admin
+    only — plain authentication is not enough.
+    """
+    try:
+        user = request.get(KEY_HASS_USER)
+    except Exception:  # noqa: BLE001 - no user on the request
+        return False
+    return user is not None and bool(getattr(user, "is_admin", False))
 
 
 class TerminalFrontendView(HomeAssistantView):
@@ -203,6 +223,8 @@ class FilesListView(HomeAssistantView):
         self.hass = hass
 
     async def get(self, request: web.Request) -> web.StreamResponse:
+        if not _is_admin(request):
+            return self.json_message("admin only", status_code=403)
         base = _config_base(self.hass)
         target = _resolve_within_base(base, request.query.get("path", ""))
         if target is None or not target.is_dir():
@@ -248,6 +270,8 @@ class FilesDownloadView(HomeAssistantView):
         self.hass = hass
 
     async def get(self, request: web.Request) -> web.StreamResponse:
+        if not _is_admin(request):
+            return self.json_message("admin only", status_code=403)
         base = _config_base(self.hass)
         target = _resolve_within_base(base, request.query.get("path", ""))
         if target is None or not target.is_file():
@@ -273,6 +297,8 @@ class FilesUploadView(HomeAssistantView):
         self.hass = hass
 
     async def post(self, request: web.Request) -> web.StreamResponse:
+        if not _is_admin(request):
+            return self.json_message("admin only", status_code=403)
         base = _config_base(self.hass)
         target_dir = _resolve_within_base(base, request.query.get("path", ""))
         if target_dir is None or not target_dir.is_dir():
@@ -304,3 +330,56 @@ class FilesUploadView(HomeAssistantView):
         if not uploaded:
             return self.json_message("no files uploaded", status_code=400)
         return self.json({"uploaded": uploaded, "path": _rel_posix(base, target_dir)})
+
+class AuthorizedKeysView(HomeAssistantView):
+    """Manage /config/.ssh/authorized_keys from the Files tab.
+
+    ``GET`` → ``{"keys": [...]}`` (type, comment, fingerprint per key).
+    ``POST {"key": "<public key line>"}`` → adds the key (validated,
+    deduplicated). ``DELETE {"fingerprint": "SHA256:…"}`` → removes it.
+    Admin users only — a key grants SSH access.
+    """
+
+    url = "/api/ha_terminal/files/authorized_keys"
+    name = "ha_terminal:authorized_keys"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+
+    def _keys_path(self) -> Path:
+        return authorized_keys_path(_config_base(self.hass))
+
+    async def get(self, request: web.Request) -> web.StreamResponse:
+        if not _is_admin(request):
+            return self.json_message("admin only", status_code=403)
+        path = self._keys_path()
+        return self.json({"keys": list_keys(path), "exists": path.exists()})
+
+    async def post(self, request: web.Request) -> web.StreamResponse:
+        if not _is_admin(request):
+            return self.json_message("admin only", status_code=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - malformed JSON body
+            return self.json_message("invalid JSON body", status_code=400)
+        path = self._keys_path()
+        ok, message = add_key(path, (body or {}).get("key") or "")
+        return self.json(
+            {"ok": ok, "message": message, "keys": list_keys(path)},
+            status_code=200 if ok else 400,
+        )
+
+    async def delete(self, request: web.Request) -> web.StreamResponse:
+        if not _is_admin(request):
+            return self.json_message("admin only", status_code=403)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - malformed JSON body
+            return self.json_message("invalid JSON body", status_code=400)
+        path = self._keys_path()
+        ok, message = remove_key(path, (body or {}).get("fingerprint") or "")
+        return self.json(
+            {"ok": ok, "message": message, "keys": list_keys(path)},
+            status_code=200 if ok else 400,
+        )
