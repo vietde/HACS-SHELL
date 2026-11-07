@@ -40,11 +40,30 @@
     return null;
   }
 
+  // Tell the server where the page got to (loaded, token received,
+  // websocket open/closed). Used to diagnose a blank screen on a phone,
+  // where there is no dev console to look at. Sends only a short stage
+  // string — never the token. Failures are silent on purpose.
+  var reportedStages = {};
+  function report(stage) {
+    if (reportedStages[stage]) return;
+    reportedStages[stage] = true;
+    try {
+      fetch("/api/ha_terminal/client-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: stage }),
+        keepalive: true,
+      }).catch(function () {});
+    } catch (e) { /* ignore */ }
+  }
+
   window.addEventListener("message", function (ev) {
     if (ev.origin !== location.origin) return;
     var d = ev.data || {};
     if (d.type === "ha-terminal-token" && d.token) {
       haToken = d.token;
+      report("token-parent");
       if (!termWs || termWs.readyState !== WebSocket.OPEN) connectTerminal();
     }
   });
@@ -97,16 +116,19 @@
         return;
       }
       setStatus(false, "No HA session — open Home Assistant first");
+      report("token-timeout");
       showOverlay("No Home Assistant session found. Open this page from inside Home Assistant (sidebar → Terminal) while logged in.");
       return;
     }
     tokenWaitedMs = 0;
+    if (!haToken) report("token-storage");
     setStatus(false, "Connecting…");
     hideOverlay();
     termWs = new WebSocket(WS_BASE + "/api/ha_terminal/ws?token=" + encodeURIComponent(token));
     termWs.binaryType = "arraybuffer";
     termWs.onopen = function () {
       tokenRefreshTried = false;
+      report("ws-open");
       setStatus(true, "Connected");
       fitAddon.fit();
       termSendResize();
@@ -124,6 +146,7 @@
     };
     termWs.onclose = function (ev) {
       setStatus(false, "Disconnected");
+      report(ev.code === 4401 ? "ws-close-4401" : "ws-close-" + ev.code);
       if (!termWantOpen) return;
       if (ev.code === 4401 && !tokenRefreshTried && window.parent && window.parent !== window) {
         // Token expired — ask the panel for a fresh one and retry once
@@ -139,6 +162,7 @@
         : "Terminal closed. The shell may have exited.");
     };
     termWs.onerror = function () {
+      report("ws-error");
       setStatus(false, "Connection error");
     };
   }
@@ -405,6 +429,7 @@
   document.getElementById("tab-files").addEventListener("click", function () { showTab("files"); });
 
   /* ---------------- Boot ---------------- */
+  report("page-loaded");
   fitAddon.fit();
   connectTerminal();
 })();

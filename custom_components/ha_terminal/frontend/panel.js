@@ -22,6 +22,10 @@ class HATerminalPanel extends HTMLElement {
     this._onMessage = this._onMessage.bind(this);
     this.style.display = "block";
     this.style.height = "100%";
+    // The iframe is absolutely positioned inside this element, so it
+    // fills the panel area even if the element's own height comes from
+    // the fallback below instead of the layout.
+    this.style.position = "relative";
   }
 
   set hass(hass) {
@@ -38,11 +42,29 @@ class HATerminalPanel extends HTMLElement {
     const iframe = document.createElement("iframe");
     iframe.src = "/api/ha_terminal/";
     iframe.title = "HA Terminal";
-    iframe.style.cssText = "border:0;width:100%;height:100%;display:block;";
+    iframe.style.cssText =
+      "border:0;position:absolute;inset:0;width:100%;height:100%;display:block;";
     this.appendChild(iframe);
     this._iframe = iframe;
-    iframe.addEventListener("load", () => this._postToken());
+    iframe.addEventListener("load", () => {
+      this._postToken();
+      this._fixHeight();
+    });
     window.addEventListener("message", this._onMessage);
+    requestAnimationFrame(() => this._fixHeight());
+  }
+
+  // If the percentage heights did not resolve (the element collapsed to
+  // near zero — seen on the mobile app, where the panel showed only a
+  // black screen), fall back to a viewport-based height so the terminal
+  // is actually visible. Only kicks in when the layout gave us nothing;
+  // a calc() with dvh stays live across rotation.
+  _fixHeight() {
+    try {
+      if (this.getBoundingClientRect().height < 50) {
+        this.style.height = "calc(100dvh - 110px)";
+      }
+    } catch (e) { /* ignore */ }
   }
 
   disconnectedCallback() {

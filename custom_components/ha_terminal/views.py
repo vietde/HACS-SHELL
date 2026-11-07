@@ -108,6 +108,32 @@ class TerminalAssetView(HomeAssistantView):
         return web.FileResponse(path, headers={"Content-Type": _ASSET_TYPES[path.suffix]})
 
 
+class ClientLogView(HomeAssistantView):
+    """Receive a short stage report from the terminal page.
+
+    The page posts where it got to (loaded, token received, websocket
+    open/closed) so a blank screen on a phone can be diagnosed from the
+    HA log instead of guessed at. No token or user data is sent — just a
+    short stage string. Unauthenticated on purpose: the page cannot
+    authenticate before it has a token, which is exactly the state this
+    diagnoses.
+    """
+
+    url = "/api/ha_terminal/client-log"
+    name = "ha_terminal:client_log"
+    requires_auth = False
+
+    async def post(self, request: web.Request) -> web.StreamResponse:
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001 - bad body is not worth an error
+            data = {}
+        stage = str(data.get("stage") or "")[:64]
+        if stage:
+            _LOGGER.warning("HA Terminal client: %s", stage)
+        return self.json_message("ok")
+
+
 class TerminalWebSocketView(HomeAssistantView):
     """WebSocket bridge between the browser terminal and a PTY shell."""
 

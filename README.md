@@ -122,12 +122,10 @@ host. That is the whole point (lightweight), and the one real limit:
 
 ## Status
 
-v0.1.4 — the sidebar panel is a custom element now, not a plain iframe:
-it gets the `hass` object from the frontend and passes the access token
-to the terminal page via postMessage. That fixes the mobile app, where
-the page showed "No Home Assistant session found" because the app keeps
-tokens out of localStorage. The page still falls back to localStorage in
-a desktop browser, asks the panel for a fresh token when a session
-expires, and the topbar now wraps on narrow screens instead of cutting
-off. Also fixed: the SSH host-key load and asyncssh import no longer run
-on the event loop (HA had flagged them as blocking calls).
+v0.1.5 — the 0.1.4 custom panel showed only a black screen on the mobile
+app (the desktop web version was fine). The likeliest cause is the panel
+element collapsing to near-zero height on mobile, so the page adds a
+viewport-height fallback when its height comes out under 50px, and the
+terminal page now reports where it got to (loaded, token received,
+websocket open/closed) to a small endpoint that logs it — so a blank
+screen can be read off the Home Assistant log instead of guessed at.
