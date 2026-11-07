@@ -1,0 +1,112 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0e14;
+  --panel: #131722;
+  --text: #d6deeb;
+  --muted: #69779a;
+  --accent: #03a9f4;
+  --danger: #ef5350;
+  --border: #1e2532;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  height: 48px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.brand { font-weight: 600; font-size: 15px; white-space: nowrap; }
+.tabs { display: flex; gap: 4px; }
+.tab {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tab.active { color: var(--text); background: #1c2436; border-color: var(--border); }
+.actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.status { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
+.status.connected { color: #26a69a; background: rgba(38, 166, 154, .15); }
+.status.disconnected { color: var(--danger); background: rgba(239, 83, 80, .15); }
+.btn {
+  background: #1c2436;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.hidden { display: none !important; }
+#terminal { flex: 1 1 auto; min-height: 0; padding: 4px 0 0 4px; }
+#terminal .xterm { height: 100%; }
+
+.overlay {
+  position: absolute;
+  inset: 48px 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 14, 20, .85);
+  text-align: center;
+  z-index: 5;
+}
+
+.logbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+.logbar select, .logbar input[type="text"] {
+  background: #0b0e14;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+.logbar input[type="text"] { width: 220px; }
+.log-count { color: var(--muted); margin-left: auto; }
+#log-output {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 8px 12px;
+  overflow-y: auto;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+#log-output .lvl-ERROR, #log-output .lvl-CRITICAL { color: #ff8a80; }
+#log-output .lvl-WARNING { color: #ffcc80; }
+#log-output .lvl-DEBUG { color: var(--muted); }
+#log-output mark { background: #ffeb3b; color: #000; border-radius: 2px; }

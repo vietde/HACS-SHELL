@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HA Terminal</title>
+<link rel="stylesheet" href="/api/ha_terminal/assets/xterm.css">
+<link rel="stylesheet" href="/api/ha_terminal/assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">⌨️ HA Terminal</div>
+  <nav class="tabs">
+    <button id="tab-terminal" class="tab active">Terminal</button>
+    <button id="tab-logs" class="tab">Logs</button>
+  </nav>
+  <div class="actions">
+    <span id="status" class="status disconnected">Disconnected</span>
+    <button id="btn-reconnect" class="btn" title="Reconnect the terminal">Reconnect</button>
+    <button id="btn-clear" class="btn" title="Clear the terminal screen">Clear</button>
+    <button id="btn-download" class="btn" title="Download the full log file">Download log</button>
+  </div>
+</header>
+
+<main id="view-terminal" class="view">
+  <div id="terminal"></div>
+  <div id="term-overlay" class="overlay hidden">
+    <div>
+      <p id="overlay-text">Terminal closed.</p>
+      <button id="btn-overlay-reconnect" class="btn primary">Reconnect</button>
+    </div>
+  </div>
+</main>
+
+<main id="view-logs" class="view hidden">
+  <div class="logbar">
+    <label>Level
+      <select id="log-level">
+        <option value="DEBUG" selected>Debug</option>
+        <option value="INFO">Info</option>
+        <option value="WARNING">Warning</option>
+        <option value="ERROR">Error</option>
+        <option value="CRITICAL">Critical</option>
+      </select>
+    </label>
+    <label class="search">Search
+      <input id="log-search" type="text" placeholder="filter lines…" autocomplete="off">
+    </label>
+    <label class="check"><input id="log-follow" type="checkbox" checked> Follow</label>
+    <button id="btn-log-clear" class="btn">Clear view</button>
+    <span id="log-count" class="log-count"></span>
+  </div>
+  <pre id="log-output"></pre>
+</main>
+
+<script src="/api/ha_terminal/assets/xterm.min.js"></script>
+<script src="/api/ha_terminal/assets/addon-fit.js"></script>
+<script src="/api/ha_terminal/assets/app.js"></script>
+</body>
+</html>
