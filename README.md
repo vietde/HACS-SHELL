@@ -122,10 +122,16 @@ host. That is the whole point (lightweight), and the one real limit:
 
 ## Status
 
-v0.1.5 — the 0.1.4 custom panel showed only a black screen on the mobile
-app (the desktop web version was fine). The likeliest cause is the panel
-element collapsing to near-zero height on mobile, so the page adds a
-viewport-height fallback when its height comes out under 50px, and the
-terminal page now reports where it got to (loaded, token received,
-websocket open/closed) to a small endpoint that logs it — so a blank
-screen can be read off the Home Assistant log instead of guessed at.
+v0.1.6 — root cause of the black screen found and fixed. The custom
+panel element's constructor set `this.style.display/height/position`,
+which the Custom Elements spec forbids — setting an attribute inside
+a constructor throws (`NotSupportedError`), so the panel element
+could never be created at all, on the web, on mobile browsers, or in
+the HA app. That is why the page never loaded and the beacon never
+fired on any platform. The fix moves those three style lines into
+`connectedCallback` (where they are allowed) and guards
+`customElements.define` so a second module load cannot throw either.
+Verified in a real browser-like harness (jsdom) with the actual
+files: the element now creates, the iframe loads, the token is handed
+over, and loading the module twice is harmless. No sign-in step
+needed — the panel still gets the token from Home Assistant itself.

@@ -20,12 +20,10 @@ class HATerminalPanel extends HTMLElement {
     this._token = null;
     this._iframe = null;
     this._onMessage = this._onMessage.bind(this);
-    this.style.display = "block";
-    this.style.height = "100%";
-    // The iframe is absolutely positioned inside this element, so it
-    // fills the panel area even if the element's own height comes from
-    // the fallback below instead of the layout.
-    this.style.position = "relative";
+    // NOTE: a custom element constructor must not set attributes or add
+    // children — setting this.style.* here throws NotSupportedError and
+    // the element can never be created (that was the v0.1.4/v0.1.5 black
+    // screen on every platform). Styles go in connectedCallback.
   }
 
   set hass(hass) {
@@ -39,6 +37,12 @@ class HATerminalPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    this.style.display = "block";
+    this.style.height = "100%";
+    // The iframe is absolutely positioned inside this element, so it
+    // fills the panel area even if the element's own height comes from
+    // the fallback below instead of the layout.
+    this.style.position = "relative";
     const iframe = document.createElement("iframe");
     iframe.src = "/api/ha_terminal/";
     iframe.title = "HA Terminal";
@@ -89,4 +93,9 @@ class HATerminalPanel extends HTMLElement {
   }
 }
 
-customElements.define("ha-terminal-panel", HATerminalPanel);
+// Guarded: HA loads this module with a plain <script type="module">
+// (no cache), so a panel re-created after a disconnect would inject it
+// a second time — defining the same name twice throws.
+if (!customElements.get("ha-terminal-panel")) {
+  customElements.define("ha-terminal-panel", HATerminalPanel);
+}
