@@ -64,7 +64,7 @@
     if (d.type === "ha-terminal-token" && d.token) {
       haToken = d.token;
       report("token-parent");
-      if (!termWs || termWs.readyState !== WebSocket.OPEN) connectTerminal();
+      connectAllPanes();
     }
   });
 
@@ -75,175 +75,284 @@
   function hideOverlay() {
     document.getElementById("term-overlay").classList.add("hidden");
   }
-  function setStatus(connected, text) {
+  /* ---------------- Terminal panes ---------------- */
+  // Split panes: each pane is its own xterm + websocket + PTY shell on
+  // the server (the server spawns one TerminalSession per websocket, so
+  // no server change is needed for splits). The toolbar's Split button
+  // adds a pane; each pane's header has its own status, Reconnect and
+  // close (×). The toolbar's Reconnect/Clear act on the active pane
+  // (the one last clicked or typed in). On narrow screens the panes
+  // stack vertically (see style.css).
+  var MAX_PANES = 4;
+  var panes = [];
+  var activePane = null;
+  var paneSeq = 0;
+  var tokenRetryTimer = null;
+
+  function setPaneStatus(pane, state, text) {
+    pane.statusEl.textContent = "● " + text;
+    pane.statusEl.className = "term-pane-status " + state;
+    updateGlobalStatus();
+  }
+
+  function updateGlobalStatus() {
     var el = document.getElementById("status");
-    el.textContent = text;
-    el.className = "status " + (connected ? "connected" : "disconnected");
+    var open = panes.filter(function (p) {
+      return p.ws && p.ws.readyState === WebSocket.OPEN;
+    }).length;
+    if (panes.length <= 1) {
+      el.textContent = open ? "Connected" : "Disconnected";
+    } else {
+      el.textContent = open + " of " + panes.length + " connected";
+    }
+    el.className = "status " + (open === panes.length && panes.length > 0 ? "connected" : "disconnected");
   }
 
-  /* ---------------- Terminal ---------------- */
-  var term = new Terminal({
-    cursorBlink: true,
-    fontSize: 14,
-    fontFamily: 'ui-monospace, "Cascadia Mono", Consolas, monospace',
-    theme: { background: "#0b0e14", foreground: "#d6deeb" },
-    allowProposedApi: true,
-  });
-  var fitAddon = new FitAddon.FitAddon();
-  term.loadAddon(fitAddon);
-  term.open(document.getElementById("terminal"));
-
-  var termWs = null;
-  var termWantOpen = true;
-  // Auto-reconnect: the network between the browser and HA drops
-  // websocket frames (HA's own log shows "No PONG received" on the main
-  // connections too), so a dropped terminal socket is usually a
-  // transient network hiccup, not a dead shell. Reconnect a few times
-  // before giving up and showing the overlay.
-  var reconnectAttempts = 0;
-  var reconnectTimer = null;
-  var keepaliveTimer = null;
-
-  function stopKeepalive() {
-    if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+  function updatePaneButtons() {
+    document.getElementById("btn-split").disabled = panes.length >= MAX_PANES;
+    panes.forEach(function (p) {
+      p.closeBtn.classList.toggle("hidden", panes.length <= 1);
+    });
   }
-  function startKeepalive() {
-    stopKeepalive();
+
+  function setActivePane(pane) {
+    activePane = pane;
+    panes.forEach(function (p) { p.el.classList.toggle("active", p === pane); });
+  }
+
+  function paneSendResize(pane) {
+    try { pane.fitAddon.fit(); } catch (e) { /* ignore */ }
+    if (pane.ws && pane.ws.readyState === WebSocket.OPEN) {
+      pane.ws.send(JSON.stringify({ type: "resize", cols: pane.term.cols, rows: pane.term.rows }));
+    }
+  }
+
+  function fitAllPanes() {
+    panes.forEach(function (p) { paneSendResize(p); });
+  }
+
+  function createPane() {
+    if (panes.length >= MAX_PANES) return null;
+    paneSeq += 1;
+    var id = paneSeq;
+    var el = document.createElement("div");
+    el.className = "term-pane";
+    el.innerHTML =
+      '<div class="term-pane-header">' +
+        '<span class="term-pane-title">Terminal ' + id + '</span>' +
+        '<span class="term-pane-status disconnected">● Disconnected</span>' +
+        '<button class="btn term-pane-reconnect hidden">Reconnect</button>' +
+        '<button class="btn term-pane-close hidden" title="Close this terminal">×</button>' +
+      '</div>' +
+      '<div class="term-pane-body"></div>';
+    document.getElementById("panes").appendChild(el);
+    var term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: 'ui-monospace, "Cascadia Mono", Consolas, monospace',
+      theme: { background: "#0b0e14", foreground: "#d6deeb" },
+      allowProposedApi: true,
+    });
+    var fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(el.querySelector(".term-pane-body"));
+    var pane = {
+      id: id, el: el, term: term, fitAddon: fitAddon,
+      ws: null, wantOpen: true,
+      reconnectAttempts: 0, reconnectTimer: null, keepaliveTimer: null,
+      tokenRefreshTried: false,
+      statusEl: el.querySelector(".term-pane-status"),
+      reconnectBtn: el.querySelector(".term-pane-reconnect"),
+      closeBtn: el.querySelector(".term-pane-close"),
+    };
+    term.onData(function (data) {
+      setActivePane(pane);
+      if (pane.ws && pane.ws.readyState === WebSocket.OPEN) pane.ws.send(new TextEncoder().encode(data));
+    });
+    el.addEventListener("mousedown", function () { setActivePane(pane); });
+    pane.closeBtn.addEventListener("click", function () { removePane(pane); });
+    pane.reconnectBtn.addEventListener("click", function () { reconnectPane(pane); });
+    panes.push(pane);
+    updatePaneButtons();
+    setActivePane(pane);
+    connectPane(pane);
+    return pane;
+  }
+
+  function removePane(pane) {
+    if (panes.length <= 1) return; // never remove the last pane
+    pane.wantOpen = false;
+    stopPaneKeepalive(pane);
+    if (pane.reconnectTimer) { clearTimeout(pane.reconnectTimer); pane.reconnectTimer = null; }
+    if (pane.ws) { try { pane.ws.close(); } catch (e) { /* ignore */ } pane.ws = null; }
+    try { pane.term.dispose(); } catch (e) { /* ignore */ }
+    pane.el.remove();
+    panes = panes.filter(function (p) { return p !== pane; });
+    if (activePane === pane) setActivePane(panes[0]);
+    updatePaneButtons();
+    updateGlobalStatus();
+  }
+
+  function reconnectPane(pane) {
+    pane.wantOpen = true;
+    pane.reconnectAttempts = 0;
+    pane.tokenRefreshTried = false;
+    if (pane.reconnectTimer) { clearTimeout(pane.reconnectTimer); pane.reconnectTimer = null; }
+    if (pane.ws) { try { pane.ws.close(); } catch (e) { /* ignore */ } pane.ws = null; }
+    pane.reconnectBtn.classList.add("hidden");
+    pane.term.reset();
+    connectPane(pane);
+  }
+
+  function stopPaneKeepalive(pane) {
+    if (pane.keepaliveTimer) { clearInterval(pane.keepaliveTimer); pane.keepaliveTimer = null; }
+  }
+
+  function startPaneKeepalive(pane) {
+    stopPaneKeepalive(pane);
     // Application-level ping every 5 s. The server answers {"type":"pong"}.
     // This keeps data flowing through middleboxes that kill idle
-    // websockets after ~10 s (the "Terminal closed" after 10-15 s of
-    // silence), and it keeps the server's 120 s receive timeout from
-    // ever firing on a live connection.
-    keepaliveTimer = setInterval(function () {
-      if (termWs && termWs.readyState === WebSocket.OPEN) {
-        try { termWs.send(JSON.stringify({ type: "ping" })); } catch (e) { /* ignore */ }
+    // websockets after ~10 s, and it keeps the server's 120 s receive
+    // timeout from ever firing on a live connection.
+    pane.keepaliveTimer = setInterval(function () {
+      if (pane.ws && pane.ws.readyState === WebSocket.OPEN) {
+        try { pane.ws.send(JSON.stringify({ type: "ping" })); } catch (e) { /* ignore */ }
       }
     }, 5000);
   }
 
-  function scheduleReconnect() {
-    if (!termWantOpen) return;
-    if (reconnectAttempts >= 5) {
-      showOverlay("Terminal closed. The shell may have exited.");
+  function schedulePaneReconnect(pane) {
+    if (!pane.wantOpen) return;
+    if (pane.reconnectAttempts >= 5) {
+      setPaneStatus(pane, "disconnected", "Disconnected");
+      pane.reconnectBtn.classList.remove("hidden");
       return;
     }
-    reconnectAttempts += 1;
-    setStatus(false, "Connection lost — reconnecting…");
-    reconnectTimer = setTimeout(function () {
-      term.reset();
-      connectTerminal();
+    pane.reconnectAttempts += 1;
+    setPaneStatus(pane, "disconnected", "Reconnecting…");
+    pane.reconnectTimer = setTimeout(function () {
+      pane.term.reset();
+      connectPane(pane);
     }, 1000);
   }
 
-  function termSendResize() {
-    if (termWs && termWs.readyState === WebSocket.OPEN) {
-      termWs.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-    }
-  }
-
-  function connectTerminal() {
+  function connectPane(pane) {
     var token = getToken();
     if (!token) {
       // No token yet — the sidebar panel posts one (the HA mobile app
       // keeps tokens out of localStorage). Ask for it and wait a little
-      // before giving up, instead of failing on the first paint.
+      // before giving up, instead of failing on the first paint. One
+      // shared retry timer covers all panes.
       requestTokenFromParent();
       if (tokenWaitedMs < 10000) {
         tokenWaitedMs += 500;
-        setStatus(false, "Connecting…");
-        setTimeout(connectTerminal, 500);
+        setPaneStatus(pane, "connecting", "Connecting…");
+        if (!tokenRetryTimer) {
+          tokenRetryTimer = setTimeout(function () {
+            tokenRetryTimer = null;
+            panes.forEach(function (p) {
+              if (!p.ws || p.ws.readyState !== WebSocket.OPEN) connectPane(p);
+            });
+          }, 500);
+        }
         return;
       }
-      setStatus(false, "No HA session — open Home Assistant first");
+      setPaneStatus(pane, "disconnected", "No session");
       report("token-timeout");
       showOverlay("No Home Assistant session found. Open this page from inside Home Assistant (sidebar → Terminal) while logged in.");
       return;
     }
     tokenWaitedMs = 0;
     if (!haToken) report("token-storage");
-    setStatus(false, "Connecting…");
+    setPaneStatus(pane, "connecting", "Connecting…");
     hideOverlay();
-    termWs = new WebSocket(WS_BASE + "/api/ha_terminal/ws?token=" + encodeURIComponent(token));
-    termWs.binaryType = "arraybuffer";
-    termWs.onopen = function () {
-      tokenRefreshTried = false;
-      reconnectAttempts = 0;
+    var ws = new WebSocket(WS_BASE + "/api/ha_terminal/ws?token=" + encodeURIComponent(token));
+    pane.ws = ws;
+    ws.binaryType = "arraybuffer";
+    ws.onopen = function () {
+      if (ws !== pane.ws) return; // stale socket (pane reconnected already)
+      pane.tokenRefreshTried = false;
+      pane.reconnectAttempts = 0;
+      pane.reconnectBtn.classList.add("hidden");
       report("ws-open");
-      setStatus(true, "Connected");
-      startKeepalive();
-      fitAddon.fit();
-      termSendResize();
-      term.focus();
+      setPaneStatus(pane, "connected", "Connected");
+      startPaneKeepalive(pane);
+      paneSendResize(pane);
+      pane.term.focus();
     };
-    termWs.onmessage = function (ev) {
+    ws.onmessage = function (ev) {
+      if (ws !== pane.ws) return;
       if (typeof ev.data === "string") {
         try {
           var msg = JSON.parse(ev.data);
-          if (msg.type === "error") term.writeln("\r\n" + msg.message);
+          if (msg.type === "error") pane.term.writeln("\r\n" + msg.message);
         } catch (e) { /* ignore */ }
         return;
       }
-      term.write(new Uint8Array(ev.data));
+      pane.term.write(new Uint8Array(ev.data));
     };
-    termWs.onclose = function (ev) {
-      setStatus(false, "Disconnected");
-      stopKeepalive();
+    ws.onclose = function (ev) {
+      if (ws !== pane.ws) return; // stale socket
+      stopPaneKeepalive(pane);
       report(ev.code === 4401 ? "ws-close-4401" : "ws-close-" + ev.code);
-      if (!termWantOpen) return;
-      if (ev.code === 4401 && !tokenRefreshTried && window.parent && window.parent !== window) {
+      if (!pane.wantOpen) return;
+      setPaneStatus(pane, "disconnected", "Disconnected");
+      if (ev.code === 4401 && !pane.tokenRefreshTried && window.parent && window.parent !== window) {
         // Token expired — ask the panel for a fresh one and retry once
         // before telling the user the session is gone.
-        tokenRefreshTried = true;
-        setStatus(false, "Session expired — refreshing…");
+        pane.tokenRefreshTried = true;
+        setPaneStatus(pane, "connecting", "Session expired — refreshing…");
         requestTokenFromParent();
-        setTimeout(connectTerminal, 500);
+        setTimeout(function () { connectPane(pane); }, 500);
         return;
       }
       if (ev.code === 4401) {
-        showOverlay("Session expired or not an admin. Reload Home Assistant and try again.");
+        setPaneStatus(pane, "disconnected", "Session expired");
+        pane.reconnectBtn.classList.remove("hidden");
         return;
       }
       // Any other close (usually 1006, the network dropping the socket):
       // reconnect automatically a few times instead of leaving a dead
-      // overlay. A reconnect starts a fresh shell — the old one is gone
+      // pane. A reconnect starts a fresh shell — the old one is gone
       // with the socket — so the terminal is reset first.
-      scheduleReconnect();
+      schedulePaneReconnect(pane);
     };
-    termWs.onerror = function () {
+    ws.onerror = function () {
+      if (ws !== pane.ws) return;
       report("ws-error");
-      setStatus(false, "Connection error");
+      setPaneStatus(pane, "disconnected", "Connection error");
     };
   }
 
-  term.onData(function (data) {
-    if (termWs && termWs.readyState === WebSocket.OPEN) termWs.send(new TextEncoder().encode(data));
-  });
+  function connectAllPanes() {
+    panes.forEach(function (p) {
+      if (!p.ws || p.ws.readyState !== WebSocket.OPEN) connectPane(p);
+    });
+  }
 
   var resizeTimer = null;
   window.addEventListener("resize", function () {
     if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function () {
-      try { fitAddon.fit(); } catch (e) { /* ignore */ }
-      termSendResize();
-    }, 100);
+    resizeTimer = setTimeout(fitAllPanes, 100);
   });
 
+  document.getElementById("btn-split").addEventListener("click", function () {
+    var p = createPane();
+    if (p) p.term.focus();
+  });
   document.getElementById("btn-reconnect").addEventListener("click", function () {
-    termWantOpen = true;
-    reconnectAttempts = 0;
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    if (termWs) termWs.close();
-    term.reset();
-    connectTerminal();
+    var p = activePane || panes[0];
+    if (p) reconnectPane(p);
   });
   document.getElementById("btn-overlay-reconnect").addEventListener("click", function () {
-    termWantOpen = true;
-    reconnectAttempts = 0;
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    term.reset();
-    connectTerminal();
+    tokenWaitedMs = 0;
+    hideOverlay();
+    connectAllPanes();
   });
-  document.getElementById("btn-clear").addEventListener("click", function () { term.clear(); });
+  document.getElementById("btn-clear").addEventListener("click", function () {
+    var p = activePane || panes[0];
+    if (p) p.term.clear();
+  });
 
   /* ---------------- Files (/config) ---------------- */
   var currentPath = "";
@@ -469,9 +578,8 @@
     document.getElementById("tab-terminal").classList.toggle("active", isTerm);
     document.getElementById("tab-files").classList.toggle("active", !isTerm);
     if (isTerm) {
-      try { fitAddon.fit(); } catch (e) { /* ignore */ }
-      termSendResize();
-      term.focus();
+      fitAllPanes();
+      if (activePane) activePane.term.focus();
     } else {
       loadFiles(currentPath);
       loadKeys();
@@ -482,6 +590,5 @@
 
   /* ---------------- Boot ---------------- */
   report("page-loaded");
-  fitAddon.fit();
-  connectTerminal();
+  createPane();
 })();

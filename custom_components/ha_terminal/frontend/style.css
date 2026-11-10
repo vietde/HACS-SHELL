@@ -60,8 +60,41 @@ body {
 
 .view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .hidden { display: none !important; }
-#terminal { flex: 1 1 auto; min-height: 0; padding: 4px 0 0 4px; }
-#terminal .xterm { height: 100%; }
+
+/* Split panes: side by side on wide screens, stacked on narrow ones.
+   Each pane is its own terminal + shell. */
+#panes { flex: 1 1 auto; min-height: 0; display: flex; gap: 8px; padding: 8px; }
+.term-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.term-pane.active { border-color: var(--accent); }
+.term-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+.term-pane-title { font-weight: 600; white-space: nowrap; }
+.term-pane-status { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.term-pane-status.connected { color: #26a69a; }
+.term-pane-status.disconnected { color: var(--danger); }
+.term-pane-status.connecting { color: var(--accent); }
+.term-pane-header .btn { margin-left: auto; padding: 2px 8px; font-size: 12px; }
+.term-pane-header .term-pane-close { margin-left: 0; }
+.term-pane-header .term-pane-reconnect { margin-left: auto; }
+.term-pane-body { flex: 1 1 auto; min-height: 0; padding: 4px 0 0 4px; }
+.term-pane-body .xterm { height: 100%; }
 
 .overlay {
   position: absolute;
@@ -148,7 +181,8 @@ body {
 
 /* Narrow screens (phones): let the topbar wrap instead of cutting off
    the status text and buttons, and hide the status pill — the overlay
-   already shows the connection state. */
+   already shows the connection state. Split panes stack vertically so
+   each terminal stays usable. */
 @media (max-width: 640px) {
   .topbar {
     flex-wrap: wrap;
@@ -161,4 +195,5 @@ body {
   .actions { margin-left: 0; }
   .brand { font-size: 14px; }
   .tab { padding: 6px 10px; }
+  #panes { flex-direction: column; }
 }

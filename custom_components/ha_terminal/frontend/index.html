@@ -16,13 +16,14 @@
   </nav>
   <div class="actions">
     <span id="status" class="status disconnected">Disconnected</span>
-    <button id="btn-reconnect" class="btn" title="Reconnect the terminal">Reconnect</button>
-    <button id="btn-clear" class="btn" title="Clear the terminal screen">Clear</button>
+    <button id="btn-split" class="btn" title="Open a second terminal next to this one">Split</button>
+    <button id="btn-reconnect" class="btn" title="Reconnect the active terminal">Reconnect</button>
+    <button id="btn-clear" class="btn" title="Clear the active terminal screen">Clear</button>
   </div>
 </header>
 
 <main id="view-terminal" class="view">
-  <div id="terminal"></div>
+  <div id="panes"></div>
   <div id="term-overlay" class="overlay hidden">
     <div>
       <p id="overlay-text">Terminal closed.</p>

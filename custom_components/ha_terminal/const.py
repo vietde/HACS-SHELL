@@ -23,4 +23,4 @@ WS_CLOSE_UNAUTHORIZED = 4401
 
 # Integration version (mirrors manifest.json). Used to bust the browser
 # cache on the panel module URL after an update.
-VERSION = "0.1.7"
+VERSION = "0.1.8"
