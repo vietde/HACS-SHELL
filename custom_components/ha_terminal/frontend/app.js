@@ -95,6 +95,45 @@
 
   var termWs = null;
   var termWantOpen = true;
+  // Auto-reconnect: the network between the browser and HA drops
+  // websocket frames (HA's own log shows "No PONG received" on the main
+  // connections too), so a dropped terminal socket is usually a
+  // transient network hiccup, not a dead shell. Reconnect a few times
+  // before giving up and showing the overlay.
+  var reconnectAttempts = 0;
+  var reconnectTimer = null;
+  var keepaliveTimer = null;
+
+  function stopKeepalive() {
+    if (keepaliveTimer) { clearInterval(keepaliveTimer); keepaliveTimer = null; }
+  }
+  function startKeepalive() {
+    stopKeepalive();
+    // Application-level ping every 5 s. The server answers {"type":"pong"}.
+    // This keeps data flowing through middleboxes that kill idle
+    // websockets after ~10 s (the "Terminal closed" after 10-15 s of
+    // silence), and it keeps the server's 120 s receive timeout from
+    // ever firing on a live connection.
+    keepaliveTimer = setInterval(function () {
+      if (termWs && termWs.readyState === WebSocket.OPEN) {
+        try { termWs.send(JSON.stringify({ type: "ping" })); } catch (e) { /* ignore */ }
+      }
+    }, 5000);
+  }
+
+  function scheduleReconnect() {
+    if (!termWantOpen) return;
+    if (reconnectAttempts >= 5) {
+      showOverlay("Terminal closed. The shell may have exited.");
+      return;
+    }
+    reconnectAttempts += 1;
+    setStatus(false, "Connection lost — reconnecting…");
+    reconnectTimer = setTimeout(function () {
+      term.reset();
+      connectTerminal();
+    }, 1000);
+  }
 
   function termSendResize() {
     if (termWs && termWs.readyState === WebSocket.OPEN) {
@@ -128,8 +167,10 @@
     termWs.binaryType = "arraybuffer";
     termWs.onopen = function () {
       tokenRefreshTried = false;
+      reconnectAttempts = 0;
       report("ws-open");
       setStatus(true, "Connected");
+      startKeepalive();
       fitAddon.fit();
       termSendResize();
       term.focus();
@@ -146,6 +187,7 @@
     };
     termWs.onclose = function (ev) {
       setStatus(false, "Disconnected");
+      stopKeepalive();
       report(ev.code === 4401 ? "ws-close-4401" : "ws-close-" + ev.code);
       if (!termWantOpen) return;
       if (ev.code === 4401 && !tokenRefreshTried && window.parent && window.parent !== window) {
@@ -157,9 +199,15 @@
         setTimeout(connectTerminal, 500);
         return;
       }
-      showOverlay(ev.code === 4401
-        ? "Session expired or not an admin. Reload Home Assistant and try again."
-        : "Terminal closed. The shell may have exited.");
+      if (ev.code === 4401) {
+        showOverlay("Session expired or not an admin. Reload Home Assistant and try again.");
+        return;
+      }
+      // Any other close (usually 1006, the network dropping the socket):
+      // reconnect automatically a few times instead of leaving a dead
+      // overlay. A reconnect starts a fresh shell — the old one is gone
+      // with the socket — so the terminal is reset first.
+      scheduleReconnect();
     };
     termWs.onerror = function () {
       report("ws-error");
@@ -182,12 +230,16 @@
 
   document.getElementById("btn-reconnect").addEventListener("click", function () {
     termWantOpen = true;
+    reconnectAttempts = 0;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (termWs) termWs.close();
     term.reset();
     connectTerminal();
   });
   document.getElementById("btn-overlay-reconnect").addEventListener("click", function () {
     termWantOpen = true;
+    reconnectAttempts = 0;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     term.reset();
     connectTerminal();
   });

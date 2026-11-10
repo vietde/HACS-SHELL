@@ -105,7 +105,15 @@ class TerminalAssetView(HomeAssistantView):
             or not path.is_file()
         ):
             return web.Response(status=404, text="not found")
-        return web.FileResponse(path, headers={"Content-Type": _ASSET_TYPES[path.suffix]})
+        # Never cache the frontend: after a HACS update the browser must
+        # fetch the new app.js/panel.js, not keep running the old ones.
+        return web.FileResponse(
+            path,
+            headers={
+                "Content-Type": _ASSET_TYPES[path.suffix],
+                "Cache-Control": "no-cache, max-age=0",
+            },
+        )
 
 
 class ClientLogView(HomeAssistantView):
@@ -145,7 +153,16 @@ class TerminalWebSocketView(HomeAssistantView):
         self.hass = hass
 
     async def get(self, request: web.Request) -> web.StreamResponse:
-        ws = web.WebSocketResponse(heartbeat=30)
+        # No protocol heartbeat: HA's own log shows this network drops
+        # websocket PONGs ("No PONG received after 27.5 seconds" on the
+        # main HA connections too), so a server ping whose pong never
+        # comes back would kill a live terminal. Instead the browser
+        # sends an application-level {"type":"ping"} every 5 s (answered
+        # with {"type":"pong"}), which keeps data flowing through
+        # middleboxes that kill idle websockets after ~10 s. The 120 s
+        # receive timeout only cleans up truly dead peers: a live client
+        # pings every 5 s and never trips it.
+        ws = web.WebSocketResponse(heartbeat=None, receive_timeout=120)
         await ws.prepare(request)
         user = _validate_ws_user(self.hass, request)
         if user is None:

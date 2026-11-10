@@ -20,3 +20,7 @@ DEFAULT_CWD = "/config"
 
 # WebSocket close code sent when the browser token is missing/invalid.
 WS_CLOSE_UNAUTHORIZED = 4401
+
+# Integration version (mirrors manifest.json). Used to bust the browser
+# cache on the panel module URL after an update.
+VERSION = "0.1.7"

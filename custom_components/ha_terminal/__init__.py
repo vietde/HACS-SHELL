@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_SSH_ENABLED,
     DEFAULT_SSH_PORT,
     DOMAIN,
+    VERSION,
 )
 from .ssh_server import start_ssh_server
 from .views import (
@@ -109,7 +110,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "ha-terminal-panel",
         sidebar_title="Terminal",
         sidebar_icon="mdi:console-terminal",
-        module_url="/api/ha_terminal/assets/panel.js",
+        module_url=f"/api/ha_terminal/assets/panel.js?v={VERSION}",
         require_admin=True,
     )
 
